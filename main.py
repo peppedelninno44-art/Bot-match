@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import requests
 from PIL import Image
 from io import BytesIO
@@ -23,7 +24,7 @@ def get_image_bytes(url):
 
 class hView(discord.ui.View):
     def __init__(self, p1, p2, embed):
-        super().__init__(timeout=120)
+        super().__init__(timeout=None)
         self.p1 = p1
         self.p2 = p2
         self.embed = embed
@@ -65,13 +66,13 @@ class hView(discord.ui.View):
         for child in self.children: child.disabled = True
         self.rematch_button.disabled = False
         
-        await interaction.followup.edit_message(message_id=interaction.message.id, embed=self.embed, view=self, attachments=[file])
+        await interaction.edit_original_response(embed=self.embed, view=self, attachments=[file])
 
     async def rematch_callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        await show_match(interaction.channel, self.p1, self.p2)
+        await show_match(interaction, self.p1, self.p2)
 
-async def show_match(channel, p1, p2):
+async def show_match(interaction, p1, p2):
     url1 = p1.avatar.url if p1.avatar else p1.default_avatar.url
     url2 = p2.avatar.url if p2.avatar else p2.default_avatar.url
     img1, img2 = get_image_bytes(url1), get_image_bytes(url2)
@@ -87,12 +88,26 @@ async def show_match(channel, p1, p2):
     embed.set_image(url="attachment://match.png")
     embed.set_footer(text=f"Match created on {datetime.now().strftime('%d/%m/%Y - %H:%M')}")
     
-    await channel.send(embed=embed, file=file, view=hView(p1, p2, embed))
+    # Se è un comando slash (interaction), rispondiamo diversamente
+    if isinstance(interaction, discord.Interaction):
+        await interaction.followup.send(embed=embed, file=file, view=hView(p1, p2, embed))
+    else:
+        await interaction.send(embed=embed, file=file, view=hView(p1, p2, embed))
 
-@bot.command()
-async def match(ctx, p1: discord.Member, p2: discord.Member):
-    if ctx.author.id not in ADMIN_IDS: return
-    await show_match(ctx.channel, p1, p2)
+# --- Slash Command ---
+@bot.tree.command(name="match", description="Inizia un nuovo match 1v1")
+@app_commands.describe(p1="Primo giocatore", p2="Secondo giocatore")
+async def match(interaction: discord.Interaction, p1: discord.Member, p2: discord.Member):
+    if interaction.user.id not in ADMIN_IDS:
+        await interaction.response.send_message("Non hai il permesso!", ephemeral=True)
+        return
+    await interaction.response.defer()
+    await show_match(interaction, p1, p2)
+
+@bot.event
+async def on_ready():
+    await bot.tree.sync()
+    print(f'Bot online! Slash commands sincronizzati.')
 
 bot.run(os.environ['TOKEN'])
-      
+    
